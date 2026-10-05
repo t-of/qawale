@@ -1,0 +1,19 @@
+{
+  "id": "./",
+  "name": "qawale — 4×4の山くずし対戦ボードゲーム",
+  "short_name": "qawale",
+  "description": "山をくずして自分の色を並べる、Gigamic『Kawale』風の対戦パズル。",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#2d2a26",
+  "theme_color": "#2d2a26",
+  "lang": "ja",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
