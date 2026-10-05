@@ -1,4 +1,6 @@
-'use strict';
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 // localStorage はほかのアプリと共有される（同じ t-of.github.io のため）。
 // キーは必ず 'qawale.' で始める。
@@ -184,11 +186,180 @@ function animateCpuMove(origin, path) {
   setTimeout(step, 250);
 }
 
+// ---- 3D の盤（three.js）。quarto・quantik と同じ木の質感。ドラッグで回す、ピンチで寄る ----
+const canvas = document.createElement('canvas');
+canvas.className = 'board3d__canvas';
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+const scene = new THREE.Scene();
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
+camera.position.set(0, 6, 5.6);
+const controls = new OrbitControls(camera, canvas);
+controls.enablePan = false;
+controls.minDistance = 4;
+controls.maxDistance = 14;
+controls.maxPolarAngle = Math.PI / 2 - 0.05; // 盤の下にはもぐらない
+controls.target.set(0, 0.3, 0);
+controls.update();
+controls.addEventListener('change', draw);
+
+// 影は付けない。環境光（RoomEnvironment）と弱い向きの光で質感を出す
+scene.add(new THREE.HemisphereLight(0xfff4e0, 0x3a2e24, 0.5));
+const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+sun.position.set(3, 8, 4);
+scene.add(sun);
+
+// 木目（灰色の濃淡）。色はマテリアルの color で付ける
+function woodTexture() {
+  const S = 256;
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const g = c.getContext('2d');
+  const img = g.createImageData(S, S);
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      const t = (y + 9 * Math.sin((2 * Math.PI * x) / S * 2) + 3 * Math.sin((2 * Math.PI * x) / S * 7)) / S;
+      const ring = Math.pow(0.5 + 0.5 * Math.sin(2 * Math.PI * t * 14), 6);
+      const v = 255 * (0.9 - 0.16 * ring + (Math.random() - 0.5) * 0.05);
+      const p = (y * S + x) * 4;
+      img.data[p] = img.data[p + 1] = img.data[p + 2] = v;
+      img.data[p + 3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = 4;
+  return tex;
+}
+const GRAIN = woodTexture();
+const wood = (color, o = {}) => new THREE.MeshPhysicalMaterial({
+  color, map: GRAIN, roughness: 0.5, clearcoat: 0.35, clearcoatRoughness: 0.35, envMapIntensity: 0.7, side: THREE.DoubleSide, ...o,
+});
+
+const board = new THREE.Mesh(new THREE.BoxGeometry(4.8, 0.36, 4.8), wood(0x6a4329, { clearcoat: 0.5 }));
+board.position.y = -0.18;
+scene.add(board);
+
+const CELL_BASE = 0x4a2e1c;
+const GROOVE_BASE = 0x24160d;
+const cellGeo = new THREE.CircleGeometry(0.42, 48);
+const grooveGeo = new THREE.RingGeometry(0.42, 0.47, 48);
+function cellX(i) { return (i % 4) - 1.5; }
+function cellZ(i) { return Math.floor(i / 4) - 1.5; }
+const GROOVE_MAT = new THREE.MeshStandardMaterial({ color: GROOVE_BASE, roughness: 0.9 });
+const cellMeshes = [...Array(16).keys()].map((i) => {
+  const m = new THREE.Mesh(cellGeo, wood(CELL_BASE, { roughness: 0.7, clearcoat: 0 }));
+  m.rotation.x = -Math.PI / 2;
+  m.position.set(cellX(i), 0.004, cellZ(i));
+  m.userData.cell = i;
+  const ring = new THREE.Mesh(grooveGeo, GROOVE_MAT);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(m.position.x, 0.003, m.position.z);
+  scene.add(m, ring);
+  return m;
+});
+
+// 石：先手・後手は quarto と同じ明るい木・暗い木、中立は落ち着いた石の色
+const CHIP_H = 0.16, CHIP_R = 0.33;
+function chipGeo() {
+  const b = 0.035; // ふちの面取り
+  const pts = [new THREE.Vector2(0, 0)];
+  const arc = (cx, cy, r, a0, a1) => { for (let k = 0; k <= 4; k++) { const a = a0 + ((a1 - a0) * k) / 4; pts.push(new THREE.Vector2(cx + r * Math.cos(a), cy + r * Math.sin(a))); } };
+  arc(CHIP_R - b, b, b, -Math.PI / 2, 0);
+  arc(CHIP_R - b, CHIP_H - b, b, 0, Math.PI / 2);
+  pts.push(new THREE.Vector2(0, CHIP_H));
+  return new THREE.LatheGeometry(pts, 48);
+}
+const CHIP_GEO = chipGeo();
+const CHIP_MAT = {
+  1: new THREE.MeshPhysicalMaterial({ color: 0x8a8070, roughness: 0.85, envMapIntensity: 0.5 }), // 中立：石
+  2: wood(0xead3a8),
+  3: wood(0x5a3820),
+};
+function chipMesh(color) { return new THREE.Mesh(CHIP_GEO, CHIP_MAT[color]); }
+
+// 選べる・置ける・いまいる・そろった、の強調は床に薄いリングを重ねて出す
+const ringGeo = new THREE.RingGeometry(0.3, 0.35, 40);
+const wideRingGeo = new THREE.RingGeometry(0.37, 0.47, 40);
+function ringMat(color, opacity) { return new THREE.MeshBasicMaterial({ color, transparent: true, opacity }); }
+const RING_STYLE = {
+  pickable: [ringGeo, ringMat(0xffd35c, 0.35)],
+  legal: [ringGeo, ringMat(0xffd35c, 0.9)],
+  cur: [ringGeo, ringMat(0xffffff, 0.8)],
+  win: [wideRingGeo, ringMat(0xffd35c, 0.95)],
+};
+function highlightMesh(kind, i) {
+  const [geo, mat] = RING_STYLE[kind];
+  const m = new THREE.Mesh(geo, mat);
+  m.rotation.x = -Math.PI / 2;
+  m.position.set(cellX(i), 0.006, cellZ(i));
+  return m;
+}
+function cellHighlight(i) {
+  if (G.winLines.some((line) => line.includes(i))) return 'win';
+  if (G.sel && G.sel.cur === i) return 'cur';
+  if (isLegalTarget(i)) return 'legal';
+  if (!G.sel && canInteract() && G.board[i].length > 0) return 'pickable';
+  return null;
+}
+
+let pieceGroup = new THREE.Group();
+scene.add(pieceGroup);
+function syncScene() {
+  scene.remove(pieceGroup);
+  pieceGroup = new THREE.Group();
+  G.board.forEach((stack, i) => {
+    stack.forEach((color, h) => {
+      const m = chipMesh(color);
+      m.position.set(cellX(i), h * CHIP_H, cellZ(i));
+      m.userData.cell = i;
+      pieceGroup.add(m);
+    });
+    const kind = cellHighlight(i);
+    if (kind) pieceGroup.add(highlightMesh(kind, i));
+  });
+  scene.add(pieceGroup);
+  draw();
+}
+
+function draw() { renderer.render(scene, camera); }
+new ResizeObserver(() => {
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (!w || !h) return;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  // 縦長の画面でも盤の横が切れないように、縦の画角を広げる
+  camera.fov = w < h ? (2 * Math.atan(Math.tan((19 * Math.PI) / 180) * (h / w)) * 180) / Math.PI : 38;
+  camera.updateProjectionMatrix();
+  draw();
+}).observe(canvas);
+
+// 動かさずに離したらタップ（ドラッグは回転）
+let downAt = null;
+canvas.addEventListener('pointerdown', (e) => { downAt = [e.clientX, e.clientY]; });
+canvas.addEventListener('pointerup', (e) => {
+  if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 6) return;
+  downAt = null;
+  if (!G) return;
+  const r = canvas.getBoundingClientRect();
+  const ray = new THREE.Raycaster();
+  ray.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), camera);
+  const hit = ray.intersectObjects([...cellMeshes, pieceGroup], true)[0];
+  if (hit && hit.object.userData.cell != null) onCellTap(hit.object.userData.cell);
+});
+
 // ---- 画面 ----
 function render() {
   const stage = document.getElementById('stage');
   if (!G) { stage.innerHTML = titleHTML(); bindTitle(); return; }
   stage.innerHTML = gameHTML();
+  document.getElementById('board3d').appendChild(canvas);
+  syncScene();
   bindGame();
 }
 
@@ -225,23 +396,6 @@ function bindTitle() {
   }));
 }
 
-const COLOR_CLASS = { 0: 'empty', 1: 'n', 2: 'a', 3: 'b' };
-function cellHTML(i) {
-  const stack = G.board[i];
-  const under = stack.slice(0, -1).map((c) => `<span class="chip chip--${COLOR_CLASS[c]}"></span>`).join('');
-  const top = stack.length ? `<span class="chip chip--top chip--${COLOR_CLASS[topColor(stack)]}"></span>` : '';
-  const cls = ['cell'];
-  if (G.sel && G.sel.cur === i) cls.push('cell--cur');
-  if (isLegalTarget(i)) cls.push('cell--legal');
-  if ((!G.sel) && canInteract() && stack.length > 0) cls.push('cell--pickable');
-  if (G.winLines.some((line) => line.includes(i))) cls.push('cell--win');
-  return `<button class="${cls.join(' ')}" data-cell="${i}" type="button">
-    <span class="cell__height">${stack.length || ''}</span>
-    <span class="cell__chips">${under}</span>
-    ${top}
-  </button>`;
-}
-
 function statusText() {
   if (thinking) return 'CPU が考え中…';
   if (G.winner) return G.winner === 'draw' ? '引き分け' : `${playerLabel(G.winner)} の勝ち！`;
@@ -250,7 +404,6 @@ function statusText() {
 }
 
 function gameHTML() {
-  const board = [...Array(16).keys()].map(cellHTML).join('');
   const handsRow = `
     <div class="hands">
       <span class="hands__p${G.turn === 1 && !G.winner ? ' hands__p--on' : ''}"><span class="chip chip--a"></span>${playerLabel(1)} 残り ${G.hands[0]} 個</span>
@@ -265,13 +418,13 @@ function gameHTML() {
     <div class="game">
       <p class="status">${statusText()}</p>
       ${handsRow}
-      <div class="board${thinking ? ' board--busy' : ''}">${board}</div>
+      <div class="board3d${thinking ? ' board3d--busy' : ''}" id="board3d"></div>
+      <p class="hint">ドラッグで回す・ピンチで寄る</p>
       ${again}
     </div>`;
 }
 
 function bindGame() {
-  document.querySelectorAll('[data-cell]').forEach((b) => b.addEventListener('click', () => onCellTap(Number(b.dataset.cell))));
   const again = document.querySelector('[data-again]');
   if (again) again.addEventListener('click', () => newGame(G.mode, G.strength, G.humanPlayer));
   const title = document.querySelector('[data-title]');
