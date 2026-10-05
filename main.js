@@ -14,10 +14,33 @@ function save(key, value) {
   try { localStorage.setItem(STORE + key, JSON.stringify(value)); } catch { /* 保存できなくても遊べる */ }
 }
 
-WebAppKit.init({ title: 'qawale', text: '山をくずして自分の色を並べる、Gigamic『Kawale』風の対戦パズル。' });
+WebAppKit.init({ title: 'qawale', text: '山をくずして配り直し、自分の色を 4 つ並べる対戦ボードゲーム。' });
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js');
+}
+
+// 音を使うときは、鳴らす前にこれを呼ぶ（RULES.md §5「音」）。
+function setAudioSession(soundOn) {
+  try { if (navigator.audioSession) navigator.audioSession.type = soundOn ? 'playback' : 'auto'; } catch { /* 対応していない */ }
+}
+let audioCtx = null;
+// 石を置く音（短い木の音）。win なら高めの 3 音
+function beep(win) {
+  try {
+    setAudioSession(true);
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const notes = win ? [523, 659, 784] : [300];
+    notes.forEach((f, k) => {
+      const t = audioCtx.currentTime + k * 0.12;
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.type = 'triangle'; o.frequency.value = f;
+      g.gain.setValueAtTime(0.25, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + (win ? 0.3 : 0.08));
+      o.connect(g).connect(audioCtx.destination);
+      o.start(t); o.stop(t + 0.35);
+    });
+  } catch { /* 音が出なくても遊べる */ }
 }
 
 // ---- ここからアプリ本体 ----
@@ -97,6 +120,7 @@ function placeNext(target) {
   const { taken, path } = G.sel;
   G.board[target].push(taken[path.length]);
   path.push(target);
+  beep(false);
   G.sel.prev = G.sel.cur;
   G.sel.cur = target;
   if (path.length === taken.length) finishMove();
@@ -112,6 +136,7 @@ function finishMove() {
   else if (lines2.length) { G.winner = 2; G.winLines = lines2; }
   else if (G.hands[0] === 0 && G.hands[1] === 0) { G.winner = 'draw'; }
   else { G.turn = mover === 1 ? 2 : 1; }
+  if (G.winner && G.winner !== 'draw') beep(true);
   render();
   maybeCpuTurn();
 }
