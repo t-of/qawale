@@ -109,19 +109,32 @@ function canInteract() { return !G.winner && !thinking && !isCpuTurn(); }
 // ---- 1 手の進行 ----
 function startPickup(origin) {
   const color = G.turn + 1;
-  G.sel = { origin, taken: G.board[origin].concat(color), path: [], prev: null, cur: origin };
+  const taken = G.board[origin].concat(color);
+  G.sel = { origin, taken, path: [], prev: null, cur: origin };
   G.board[origin] = [];
+  // 山は浮き上がって手に、積む自分の石は上から降りてくる
+  dropHandMotion();
+  taken.forEach((_, k) => fly('hand:' + k, k < taken.length - 1 ? stackPos(origin, k) : [cellX(origin), 3, cellZ(origin)]));
 }
 function cancelPickup() {
-  G.board[G.sel.origin] = G.sel.taken.slice(0, -1); // 積んだ自分の石も外して元に戻す
+  const rest = G.sel.taken.slice(0, -1); // 積んだ自分の石も外して元に戻す
+  dropHandMotion();
+  rest.forEach((_, k) => fly(`${G.sel.origin}:${k}`, handPos(G.sel.origin, k)));
+  G.board[G.sel.origin] = rest;
   G.sel = null;
 }
 function isLegalTarget(i) {
   return !!G.sel && NEI[G.sel.cur].includes(i) && i !== G.sel.prev;
 }
 function placeNext(target) {
-  const { taken, path } = G.sel;
+  const { taken, path, cur } = G.sel;
+  // 手の一番下の石が弧を描いて target へ。残りの手は target の上へ移る
+  const left = taken.length - path.length;
+  const handFrom = [...Array(left).keys()].map((k) => handPos(cur, k));
+  dropHandMotion();
   G.board[target].push(taken[path.length]);
+  fly(`${target}:${G.board[target].length - 1}`, handFrom[0]);
+  for (let k = 1; k < left; k++) fly('hand:' + (k - 1), handFrom[k]);
   path.push(target);
   beep(false);
   G.sel.prev = G.sel.cur;
@@ -312,23 +325,70 @@ function cellHighlight(i) {
   return null;
 }
 
+// ---- 動き：手に取る・配る・戻す石は弧を描いて飛ぶ。手の石は浮いて揺れ、そろった石は跳ねる ----
+const CALM = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const FLY_MS = 220;
+const motion = new Map(); // 'マス:高さ' か 'hand:k'（k=0 が次に置く石）→ { from: [x, y, z], t0 }
+function stackPos(i, h) { return [cellX(i), h * CHIP_H, cellZ(i)]; }
+function handPos(i, k) { return [cellX(i), (G.board[i].length + 3 + k) * CHIP_H, cellZ(i)]; }
+function fly(key, from) { if (!CALM) motion.set(key, { from, t0: performance.now() }); }
+function dropHandMotion() { for (const k of motion.keys()) if (k.startsWith('hand:')) motion.delete(k); }
+
 let pieceGroup = new THREE.Group();
 scene.add(pieceGroup);
+function addChip(color, key, to, extra) {
+  const m = chipMesh(color);
+  const mv = motion.get(key);
+  if (mv && performance.now() - mv.t0 >= FLY_MS) motion.delete(key);
+  Object.assign(m.userData, { base: to, tw: motion.get(key) }, extra);
+  m.position.set(...(m.userData.tw ? m.userData.tw.from : to));
+  pieceGroup.add(m);
+}
 function syncScene(b = G.board) {
   scene.remove(pieceGroup);
   pieceGroup = new THREE.Group();
+  const winCells = G ? G.winLines.flat() : [];
   b.forEach((stack, i) => {
     stack.forEach((color, h) => {
-      const m = chipMesh(color);
-      m.position.set(cellX(i), h * CHIP_H, cellZ(i));
-      m.userData.cell = i;
-      pieceGroup.add(m);
+      const w = h === stack.length - 1 ? winCells.indexOf(i) : -1;
+      addChip(color, `${i}:${h}`, stackPos(i, h), { cell: i, win: w < 0 ? null : w });
     });
     const kind = cellHighlight(i);
     if (kind) pieceGroup.add(highlightMesh(kind, i));
   });
+  if (G && G.sel) G.sel.taken.slice(G.sel.path.length).forEach((color, k) => addChip(color, 'hand:' + k, handPos(G.sel.cur, k), { hand: true }));
   scene.add(pieceGroup);
   draw();
+  animate();
+}
+
+let looping = false;
+function animate() {
+  if (!looping) { looping = true; requestAnimationFrame(frame); }
+}
+function frame(now) {
+  let busy = false;
+  for (const m of pieceGroup.children) {
+    const u = m.userData;
+    if (!u.base) continue;
+    const [x, y, z] = u.base;
+    let p = [x, y, z];
+    if (u.tw) {
+      const t = Math.min(1, (now - u.tw.t0) / FLY_MS);
+      if (t < 1) {
+        busy = true;
+        const e = 1 - (1 - t) ** 3, f = u.tw.from;
+        p = [f[0] + (x - f[0]) * e, f[1] + (y - f[1]) * e + 0.4 * Math.sin(Math.PI * t), f[2] + (z - f[2]) * e];
+      } else u.tw = null;
+    }
+    if (!CALM && u.hand) { busy = true; p[1] += 0.04 * Math.sin(now / 300); }
+    if (!CALM && u.win != null) { busy = true; p[1] += 0.3 * Math.max(0, Math.sin(now / 220 - u.win * 0.7)) ** 2; }
+    m.position.set(...p);
+  }
+  // 置けるマスのリングは脈打つ
+  if (!CALM && G && G.sel) { busy = true; RING_STYLE.legal[1].opacity = 0.6 + 0.35 * Math.sin(now / 180); }
+  draw();
+  if (busy) requestAnimationFrame(frame); else looping = false;
 }
 
 function draw() { renderer.render(scene, camera); }
