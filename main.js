@@ -187,6 +187,9 @@ function maybeCpuTurn() {
   };
   cpu.postMessage({ id, board: G.board, hands: G.hands, turn: G.turn, strength: G.strength });
 }
+// CPU が石を 1 個配る間（ミリ秒）。タイトルで選び、次に開いたときも同じにする
+const CPU_STEP = { slow: 650, mid: 250, fast: 90 };
+let cpuSpeed = CPU_STEP[load('speed', 'mid')] ? load('speed', 'mid') : 'mid';
 function animateCpuMove(origin, path) {
   const game = G;
   startPickup(origin);
@@ -197,9 +200,9 @@ function animateCpuMove(origin, path) {
     placeNext(path[i]);
     i++;
     if (G.sel) render(); // 手の途中（まだ続く）。最後は placeNext 内の finishMove が render 済み
-    if (i < path.length) setTimeout(step, 250);
+    if (i < path.length) setTimeout(step, CPU_STEP[cpuSpeed]);
   };
-  setTimeout(step, 250);
+  setTimeout(step, CPU_STEP[cpuSpeed]);
 }
 
 // ---- 3D の盤（three.js）。quarto・quantik と同じ木の質感。ドラッグで回す、ピンチで寄る ----
@@ -455,6 +458,13 @@ function titleHTML() {
             <option value="strong">最強</option>
           </select>
         </label>
+        <label>CPU の速さ
+          <select id="speed">
+            <option value="slow"${cpuSpeed === 'slow' ? ' selected' : ''}>ゆっくり</option>
+            <option value="mid"${cpuSpeed === 'mid' ? ' selected' : ''}>ふつう</option>
+            <option value="fast"${cpuSpeed === 'fast' ? ' selected' : ''}>はやい</option>
+          </select>
+        </label>
         <label>手番
           <select id="order">
             <option value="first">先手</option>
@@ -550,6 +560,7 @@ function rulesHTML() {
     </details>`;
 }
 function bindTitle() {
+  document.getElementById('speed').addEventListener('change', (e) => { cpuSpeed = e.target.value; save('speed', cpuSpeed); });
   document.querySelectorAll('[data-start]').forEach((b) => b.addEventListener('click', () => {
     const mode = b.dataset.start;
     const strength = mode !== '2p' ? document.getElementById('strength').value : null;
