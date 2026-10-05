@@ -95,7 +95,7 @@ function evaluate(board, turn) {
 let nodes = 0;
 // turn の番として最善手を探す。返り値は turn から見た評価値と、たどり着いた最善の手。
 function search(board, hands, turn, depth, alpha, beta, ply, deadline, tt) {
-  if ((++nodes & 2047) === 0 && performance.now() > deadline) throw TIMEOUT;
+  if ((++nodes & 255) === 0 && performance.now() > deadline) throw TIMEOUT;
 
   const key = turn + '#' + hands.join(',') + '#' + boardKey(board);
   const entry = tt.get(key);
@@ -152,7 +152,7 @@ export function bestMove(board, hands, turn, strength) {
 
   const tt = new Map();
   if (strength === 'mid') {
-    const deadline = performance.now() + 1500;
+    const deadline = performance.now() + 1300;
     try {
       const r = search(board, hands, turn, 3, -Infinity, Infinity, 0, deadline, tt);
       if (r.move) return r.move;
@@ -162,7 +162,7 @@ export function bestMove(board, hands, turn, strength) {
 
   // 最強: 時間の許す限り反復深化。残り手数まで読み切ったら、それ以上深くしない
   const remain = hands[0] + hands[1];
-  const deadline = performance.now() + 3000;
+  const deadline = performance.now() + 2800;
   let best = null;
   for (let depth = 1; depth <= remain; depth++) {
     try {
