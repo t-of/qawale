@@ -100,9 +100,10 @@ function newGame(mode, strength, humanPlayer) {
 function playerLabel(p) {
   if (p === 'draw') return '引き分け';
   if (G.mode === 'cpu') return p === G.humanPlayer ? 'あなた' : 'CPU';
+  if (G.mode === 'watch') return p === 1 ? '先手 CPU' : '後手 CPU';
   return p === 1 ? '1人目' : '2人目';
 }
-function isCpuTurn() { return G.mode === 'cpu' && G.turn !== G.humanPlayer; }
+function isCpuTurn() { return G.mode === 'watch' || (G.mode === 'cpu' && G.turn !== G.humanPlayer); }
 function canInteract() { return !G.winner && !thinking && !isCpuTurn(); }
 
 // ---- 1 手の進行 ----
@@ -402,6 +403,7 @@ function titleHTML() {
         </label>
       </div>
       <button class="pill pill--big" data-start="cpu">CPU と対戦</button>
+      <button class="pill pill--big" data-start="watch">CPU 同士の対戦を見る</button>
       <button class="pill pill--big" data-start="2p">2人で対戦（1台で交互）</button>
       ${rulesHTML()}
     </div>`;
@@ -490,7 +492,7 @@ function rulesHTML() {
 function bindTitle() {
   document.querySelectorAll('[data-start]').forEach((b) => b.addEventListener('click', () => {
     const mode = b.dataset.start;
-    const strength = mode === 'cpu' ? document.getElementById('strength').value : null;
+    const strength = mode !== '2p' ? document.getElementById('strength').value : null;
     const order = mode === 'cpu' ? document.getElementById('order').value : null;
     newGame(mode, strength, order === 'second' ? 2 : 1);
   }));
@@ -531,7 +533,7 @@ function bindGame() {
   const title = document.querySelector('[data-title]');
   if (title) title.addEventListener('click', () => {
     // 対局の途中なら、押し間違いで消えないように確かめる
-    if (!G.winner && (G.sel || G.hands[0] + G.hands[1] < 16) && !confirm('対局をやめてホームに戻りますか？')) return;
+    if (G.mode !== 'watch' && !G.winner && (G.sel || G.hands[0] + G.hands[1] < 16) && !confirm('対局をやめてホームに戻りますか？')) return;
     G = null;
     thinking = false;
     render();
