@@ -174,10 +174,12 @@ function maybeCpuTurn() {
   cpu.postMessage({ id, board: G.board, hands: G.hands, turn: G.turn, strength: G.strength });
 }
 function animateCpuMove(origin, path) {
+  const game = G;
   startPickup(origin);
   render();
   let i = 0;
   const step = () => {
+    if (G !== game) return; // 途中でホームに戻った
     placeNext(path[i]);
     i++;
     if (G.sel) render(); // 手の途中（まだ続く）。最後は placeNext 内の finishMove が render 済み
@@ -301,6 +303,7 @@ function highlightMesh(kind, i) {
   return m;
 }
 function cellHighlight(i) {
+  if (!G) return null; // タイトル画面の見本の盤
   if (G.winLines.some((line) => line.includes(i))) return 'win';
   if (G.sel && G.sel.cur === i) return 'cur';
   if (isLegalTarget(i)) return 'legal';
@@ -310,10 +313,10 @@ function cellHighlight(i) {
 
 let pieceGroup = new THREE.Group();
 scene.add(pieceGroup);
-function syncScene() {
+function syncScene(b = G.board) {
   scene.remove(pieceGroup);
   pieceGroup = new THREE.Group();
-  G.board.forEach((stack, i) => {
+  b.forEach((stack, i) => {
     stack.forEach((color, h) => {
       const m = chipMesh(color);
       m.position.set(cellX(i), h * CHIP_H, cellZ(i));
@@ -356,18 +359,33 @@ canvas.addEventListener('pointerup', (e) => {
 // ---- 画面 ----
 function render() {
   const stage = document.getElementById('stage');
-  if (!G) { stage.innerHTML = titleHTML(); bindTitle(); return; }
+  if (!G) {
+    stage.innerHTML = titleHTML();
+    document.getElementById('board3d').appendChild(canvas);
+    syncScene(DEMO);
+    bindTitle();
+    return;
+  }
   stage.innerHTML = gameHTML();
   document.getElementById('board3d').appendChild(canvas);
   syncScene();
   bindGame();
 }
 
+// タイトル画面に出す見本の局面（中盤。中立 8 個、先手 5 個、後手 4 個）
+const DEMO = [
+  [1], [1, 2], [], [1, 1],
+  [], [3], [1, 2, 3], [],
+  [], [2], [1, 3, 2], [],
+  [1, 1, 3], [2], [], [1],
+];
+
 function titleHTML() {
   return `
     <div class="title">
       <h2>カワレ</h2>
       <p class="hint">山を選んで自分の石を積み、山ごと配り直す。上から見える自分の色が 4 つ並んだら勝ち。</p>
+      <div class="board3d" id="board3d"></div>
       <div class="opts">
         <label>強さ
           <select id="strength">
@@ -385,7 +403,89 @@ function titleHTML() {
       </div>
       <button class="pill pill--big" data-start="cpu">CPU と対戦</button>
       <button class="pill pill--big" data-start="2p">2人で対戦（1台で交互）</button>
+      ${rulesHTML()}
     </div>`;
+}
+
+// ---- ルール説明の図（上から見た盤・横から見た山。色は 3D の石と同じ） ----
+const FU = 24; // 図の 1 マスの大きさ
+const FIG_KIND = { 1: 'n', 2: 'a', 3: 'b' };
+const figPos = (i) => [4 + ((i % 4) + 0.5) * FU, 4 + (((i / 4) | 0) + 0.5) * FU];
+// off: 線を横へずらす量（行きと戻りの矢印が重ならないように）
+function figArrow(a, b, cls = 'fig__arrow', off = 0) {
+  let [x1, y1] = figPos(a), [x2, y2] = figPos(b);
+  const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy);
+  x1 -= (dy / len) * off; x2 -= (dy / len) * off; y1 += (dx / len) * off; y2 += (dx / len) * off;
+  const k = 0.3; // 石に重ならないよう両端を縮める
+  return `<line class="${cls}" x1="${x1 + dx * k}" y1="${y1 + dy * k}" x2="${x2 - dx * k}" y2="${y2 - dy * k}" marker-end="url(#figArrow)"/>`;
+}
+// 上から見た 4×4。stacks: { マス: [下から上の石] }。山は一番上の色で塗り、2 個以上なら数を書く。
+// o: { path: [マス…] 配った道すじ, ng: [から, へ] だめな動き, mark: [マス…] 光らせるマス, empty: マス 手に取った後の空き }
+function figTop(stacks, o = {}) {
+  const w = 4 * FU + 8;
+  let svg = `<rect class="fig__board" width="${w}" height="${w}" rx="6"/>`;
+  for (let i = 0; i < 16; i++) {
+    const [x, y] = figPos(i);
+    svg += `<circle class="fig__hole${(o.mark || []).includes(i) ? ' fig__hole--on' : ''}${o.empty === i ? ' fig__hole--from' : ''}" cx="${x}" cy="${y}" r="${FU * 0.4}"/>`;
+    const st = stacks[i];
+    if (!st || !st.length) continue;
+    svg += `<circle class="fig__${FIG_KIND[st[st.length - 1]]}" cx="${x}" cy="${y}" r="${FU * 0.32}"/>`;
+    if (st.length > 1) svg += `<text class="fig__num" x="${x}" y="${y}">${st.length}</text>`;
+  }
+  const p = o.path || [];
+  for (let k = 1; k < p.length; k++) svg += figArrow(p[k - 1], p[k]);
+  if (o.ng) {
+    svg += figArrow(o.ng[0], o.ng[1], 'fig__arrow fig__arrow--ng', 7);
+    const [x1, y1] = figPos(o.ng[0]), [x2, y2] = figPos(o.ng[1]);
+    const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2 - 7 * Math.sign(x1 - x2), d = 4;
+    svg += `<path class="fig__x" d="M${cx - d} ${cy - d}L${cx + d} ${cy + d}M${cx + d} ${cy - d}L${cx - d} ${cy + d}"/>`;
+  }
+  return `<svg class="fig" viewBox="0 0 ${w} ${w}" width="${w * 1.5}" aria-hidden="true">${svg}</svg>`;
+}
+// 横から見た山。stacks: [[下から上の石]…] を左から並べる。arrow なら山と山の間に矢印
+function figSide(stacks, arrow) {
+  const cw = 34, ch = 9, gap = arrow ? 28 : 10, h = 6 * ch + 14;
+  const w = stacks.length * cw + (stacks.length - 1) * gap + 8;
+  let svg = `<rect class="fig__board" y="${h - 8}" width="${w}" height="8" rx="3"/>`;
+  stacks.forEach((st, k) => {
+    const x = 4 + k * (cw + gap);
+    st.forEach((c, j) => { svg += `<rect class="fig__${FIG_KIND[c]}" x="${x + 3}" y="${h - 8 - (j + 1) * ch}" width="${cw - 6}" height="${ch - 1}" rx="2"/>`; });
+    if (arrow && k > 0) svg += `<line class="fig__arrow" x1="${x - gap + 4}" y1="${h / 2}" x2="${x - 4}" y2="${h / 2}" marker-end="url(#figArrow)"/>`;
+  });
+  return `<svg class="fig" viewBox="0 0 ${w} ${h}" width="${w * 1.5}" aria-hidden="true">${svg}</svg>`;
+}
+function figItem(svg, text) {
+  return `<figure class="figs__item">${svg}<figcaption>${text}</figcaption></figure>`;
+}
+
+function rulesHTML() {
+  const start = { 0: [1, 1], 3: [1, 1], 12: [1, 1], 15: [1, 1] };
+  return `
+    <details class="rules">
+      <summary>ルール</summary>
+      <svg width="0" height="0" style="position:absolute"><defs><marker id="figArrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0L10 5L0 10z" fill="#ffd35c"/></marker></defs></svg>
+      <h3>1. 盤と石</h3>
+      <div class="figs">
+        ${figItem(figTop(start), '4×4 の盤。四隅に中立の石（灰）が 2 個ずつの山。手持ちは明るい木・暗い木が 8 個ずつで、明るい木が先手。数字は山の高さ')}
+      </div>
+      <h3>2. 山を選んで積む</h3>
+      <div class="figs">
+        ${figItem(figSide([[1, 1], [1, 1, 2]], true), '石のある山を 1 つ選び、手持ちの自分の石を 1 個いちばん上に積む')}
+      </div>
+      <h3>3. 山ごと配り直す</h3>
+      <div class="figs">
+        ${figItem(figTop({ 1: [1], 3: [1, 1], 5: [1], 6: [2], 12: [1, 1], 15: [1, 1] }, { path: [0, 1, 5, 6], empty: 0 }), 'その山を全部手に取り、いちばん下の石から 1 個ずつ、縦か横の隣のマスへ置きながら進む。空きマスにも石のある山の上にも置ける。積んだ自分の石が最後に置かれる')}
+        ${figItem(figTop({ 5: [1], 6: [1] }, { path: [5, 6], ng: [6, 5] }), '× 直前にいたマスへすぐ戻るのはだめ。回り道してから同じマスに来るのはよい')}
+      </div>
+      <h3>4. 勝ち負け</h3>
+      <div class="figs">
+        ${figItem(figTop({ 4: [1, 2], 5: [3, 2], 6: [2], 7: [1, 1, 2], 1: [3], 10: [1, 3], 15: [1] }, { mark: [4, 5, 6, 7] }), '上から見える色が自分の色で、縦・横・斜めに 4 つ並んだら勝ち。下に何が埋まっていてもよい')}
+      </div>
+      <ul>
+        <li>配った結果、両方の色が同時に並んだら、配った人の勝ち。</li>
+        <li>2 人とも手持ちを使い切っても並ばなければ引き分け。</li>
+      </ul>
+    </details>`;
 }
 function bindTitle() {
   document.querySelectorAll('[data-start]').forEach((b) => b.addEventListener('click', () => {
@@ -420,6 +520,7 @@ function gameHTML() {
       ${handsRow}
       <div class="board3d${thinking ? ' board3d--busy' : ''}" id="board3d"></div>
       <p class="hint">ドラッグで回す・ピンチで寄る</p>
+      ${G.winner ? '' : '<button class="pill game__home" data-title>ホームに戻る</button>'}
       ${again}
     </div>`;
 }
@@ -428,7 +529,13 @@ function bindGame() {
   const again = document.querySelector('[data-again]');
   if (again) again.addEventListener('click', () => newGame(G.mode, G.strength, G.humanPlayer));
   const title = document.querySelector('[data-title]');
-  if (title) title.addEventListener('click', () => { G = null; render(); });
+  if (title) title.addEventListener('click', () => {
+    // 対局の途中なら、押し間違いで消えないように確かめる
+    if (!G.winner && (G.sel || G.hands[0] + G.hands[1] < 16) && !confirm('対局をやめてホームに戻りますか？')) return;
+    G = null;
+    thinking = false;
+    render();
+  });
 }
 
 render();

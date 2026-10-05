@@ -45,7 +45,8 @@ button { font: inherit; color: inherit; }
   flex: 1;
   min-height: 0;
   display: grid;
-  place-items: center;
+  place-items: safe center;
+  overflow-y: auto;             /* ルールを開いたときにスクロールできるように */
   touch-action: manipulation;   /* ダブルタップ拡大を止める */
   user-select: none;
   -webkit-user-select: none;
@@ -102,3 +103,27 @@ button { font: inherit; color: inherit; }
 .chip--b { background: var(--p2); }
 
 .result { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 260px; }
+
+/* タイトル画面の見本の盤（対局中と同じ見た目） */
+.title .board3d { flex: none; height: 240px; }
+.game__home { align-self: center; }
+
+.rules { width: 100%; font-size: 13px; color: var(--muted); line-height: 1.6; }
+.rules summary { cursor: pointer; text-align: center; color: var(--fg); padding: 6px; }
+.rules h3 { margin: 14px 0 6px; font-size: 14px; color: var(--fg); }
+.rules ul { margin: 8px 0 0; padding-left: 1.3em; }
+.figs { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
+.figs__item { margin: 0; flex: 1 1 140px; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.figs__item figcaption { text-align: left; }
+.fig { max-width: 100%; height: auto; }
+.fig__board { fill: #6a4329; }
+.fig__hole { fill: #4a2e1c; }
+.fig__hole--on { stroke: #ffd35c; stroke-width: 2; }
+.fig__hole--from { stroke: #fff; stroke-width: 1.2; stroke-dasharray: 2 2; }
+.fig__n { fill: var(--neutral); stroke: #5c554a; stroke-width: 1; }
+.fig__a { fill: var(--p1); stroke: #b99c6c; stroke-width: 1; }
+.fig__b { fill: var(--p2); stroke: #2a1a0e; stroke-width: 1; }
+.fig__num { font-size: 9px; font-weight: 700; fill: #fff; stroke: #000; stroke-width: 2; paint-order: stroke; text-anchor: middle; dominant-baseline: central; }
+.fig__arrow { stroke: #ffd35c; stroke-width: 2; }
+.fig__arrow--ng { stroke: #ff7a6b; stroke-dasharray: 3 2; }
+.fig__x { stroke: #ff7a6b; stroke-width: 2; }
